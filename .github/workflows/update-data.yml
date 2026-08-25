@@ -46,6 +46,12 @@ jobs:
           PERIOD: ${{ github.event.inputs.full == '1' && '6y' || '3mo' }}
         run: python fetch_prices.py
 
+      - name: Fetch indices and sector ETFs
+        env:
+          FULL: ${{ github.event.inputs.full || '0' }}
+          PERIOD: ${{ github.event.inputs.full == '1' && 'max' || '3mo' }}
+        run: python fetch_assets.py
+
       - uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "data: update prices"
