@@ -1,1 +1,51 @@
+name: update-data
 
+on:
+  schedule:
+    - cron: '0 9 * * 1-5'      # UTC 09:00 = JST 18:00（平日・大引け後）
+  workflow_dispatch:
+    inputs:
+      full:
+        description: '6年分を初回一括取得する場合は 1'
+        default: '0'
+      rebuild_universe:
+        description: 'ユニバースを作り直す場合は 1'
+        default: '0'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Build universe
+        if: github.event.inputs.rebuild_universe == '1' || github.event_name == 'schedule' && github.run_number % 20 == 1
+        env:
+          MIN_MARKET_CAP: '800000000000'
+        run: python build_universe.py || echo "ユニバース更新をスキップ（既存を維持）"
+
+      - name: Fetch prices
+        env:
+          FULL: ${{ github.event.inputs.full || '0' }}
+          PERIOD: ${{ github.event.inputs.full == '1' && '6y' || '3mo' }}
+        run: python fetch_prices.py
+
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "data: update prices"
+          file_pattern: 'data/*'
