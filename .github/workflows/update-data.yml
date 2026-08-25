@@ -2,7 +2,8 @@ name: update-data
 
 on:
   schedule:
-    - cron: '0 9 * * 1-5'      # UTC 09:00 = JST 18:00（平日・大引け後）
+    - cron: '0 9 * * 1-5'     # 平日 JST 18:00 … 株価の差分更新
+    - cron: '0 6 1 * *'       # 毎月1日 JST 15:00 … ユニバース作り直し
   workflow_dispatch:
     inputs:
       full:
@@ -34,7 +35,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Build universe
-        if: github.event.inputs.rebuild_universe == '1' || github.event_name == 'schedule' && github.run_number % 20 == 1
+        if: ${{ github.event.inputs.rebuild_universe == '1' || github.event.schedule == '0 6 1 * *' }}
         env:
           MIN_MARKET_CAP: '800000000000'
         run: python build_universe.py || echo "ユニバース更新をスキップ（既存を維持）"
