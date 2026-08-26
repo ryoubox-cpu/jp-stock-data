@@ -20,6 +20,12 @@ on:
       rebuild_universe:
         description: 'ユニバースを作り直す場合は 1'
         default: '0'
+      min_market_cap:
+        description: '時価総額の下限（円）例: 800000000000=8000億, 100000000000=1000億'
+        default: '800000000000'
+      max_tickers:
+        description: '銘柄数の上限（0で無制限）'
+        default: '0'
 
 permissions:
   contents: write
@@ -45,7 +51,8 @@ jobs:
       - name: Build universe
         if: ${{ github.event.inputs.rebuild_universe == '1' || github.event.schedule == '0 6 1 * *' }}
         env:
-          MIN_MARKET_CAP: '800000000000'
+          MIN_MARKET_CAP: ${{ github.event.inputs.min_market_cap || '800000000000' }}
+          MAX_TICKERS: ${{ github.event.inputs.max_tickers || '0' }}
         run: python build_universe.py || echo "ユニバース更新をスキップ（既存を維持）"
 
       - name: Fetch stock prices
