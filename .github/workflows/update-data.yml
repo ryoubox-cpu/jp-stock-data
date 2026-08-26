@@ -2,13 +2,21 @@ name: update-data
 
 on:
   schedule:
-    - cron: '0 9 * * 1-5'     # 平日 JST 18:00 … 株価の差分更新
+    - cron: '0 9 * * 1-5'     # 平日 JST 18:00 … 差分更新
     - cron: '0 6 1 * *'       # 毎月1日 JST 15:00 … ユニバース作り直し
   workflow_dispatch:
     inputs:
+      target:
+        description: '何を取得するか'
+        type: choice
+        default: 'all'
+        options: [all, prices, assets]
       full:
-        description: '6年分を初回一括取得する場合は 1'
+        description: '全期間を取り直す場合は 1（既存データは破棄して再取得）'
         default: '0'
+      stock_period:
+        description: '個別株の取得期間（full=1のとき）例: 6y, 10y, max'
+        default: '6y'
       rebuild_universe:
         description: 'ユニバースを作り直す場合は 1'
         default: '0'
@@ -23,7 +31,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
 
@@ -40,13 +48,15 @@ jobs:
           MIN_MARKET_CAP: '800000000000'
         run: python build_universe.py || echo "ユニバース更新をスキップ（既存を維持）"
 
-      - name: Fetch prices
+      - name: Fetch stock prices
+        if: ${{ github.event.inputs.target != 'assets' }}
         env:
           FULL: ${{ github.event.inputs.full || '0' }}
-          PERIOD: ${{ github.event.inputs.full == '1' && '6y' || '3mo' }}
+          PERIOD: ${{ github.event.inputs.full == '1' && (github.event.inputs.stock_period || '6y') || '3mo' }}
         run: python fetch_prices.py
 
       - name: Fetch indices and sector ETFs
+        if: ${{ github.event.inputs.target != 'prices' }}
         env:
           FULL: ${{ github.event.inputs.full || '0' }}
           PERIOD: ${{ github.event.inputs.full == '1' && 'max' || '3mo' }}
@@ -54,5 +64,5 @@ jobs:
 
       - uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "data: update prices"
+          commit_message: "data: update (${{ github.event.inputs.target || 'scheduled' }})"
           file_pattern: 'data/*'
