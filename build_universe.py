@@ -12,6 +12,7 @@ JPXが取れない場合は universe_seed.txt（1行1コード）にフォール
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -96,25 +97,81 @@ def load_seed() -> pd.DataFrame | None:
     return pd.DataFrame({"code": codes, "meigara": codes, "market": "seed"})
 
 
-def fetch_market_caps(tickers: list[str], pause: float = 0.35) -> dict:
-    """時価総額をまとめて取得。失敗はスキップ（Noneのまま）。"""
+def fetch_market_caps(tickers: list[str], pause: float = None) -> dict:
+    """時価総額を取得する。
+
+    yfinanceは1銘柄ずつの問い合わせになるためレート制限に弱い。
+    対策:
+      - 間隔を広めに取る（既定1.2秒）
+      - 失敗が続いたら自動で減速し、長めに休む
+      - 途中経過をキャッシュに保存し、再実行時は続きから
+    """
     import yfinance as yf
 
+    pause = float(os.environ.get("PAUSE", 1.2)) if pause is None else pause
+    cache_path = "data/market_cap_cache.json"
     caps = {}
-    total = len(tickers)
-    for i, t in enumerate(tickers, 1):
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                cached = json.load(f)
+            age = time.time() - cached.get("saved_at", 0)
+            if age < 7 * 24 * 3600:              # 1週間以内なら再利用
+                caps = {k: v for k, v in cached.get("caps", {}).items() if v}
+                logging.info("キャッシュから %d 銘柄を再利用（%.1f時間前）", len(caps), age / 3600)
+        except Exception as e:
+            logging.warning("キャッシュ読み込み失敗: %s", e)
+
+    todo = [t for t in tickers if t not in caps]
+    logging.info("時価総額の取得対象 %d 銘柄（間隔 %.1f秒）", len(todo), pause)
+
+    consecutive_fail = 0
+    cur_pause = pause
+    t0 = time.time()
+    for i, t in enumerate(todo, 1):
         cap = None
         for attempt in range(3):
             try:
                 cap = yf.Ticker(t).fast_info.market_cap
                 break
-            except Exception:
-                time.sleep(1.5 * (attempt + 1))
+            except Exception as e:
+                msg = str(e).lower()
+                # レート制限らしき応答は長めに待つ
+                wait = 30.0 if ("429" in msg or "rate" in msg or "too many" in msg) else 3.0
+                time.sleep(wait * (attempt + 1))
         caps[t] = float(cap) if cap else None
-        if i % 100 == 0 or i == total:
+
+        if cap:
+            consecutive_fail = 0
+            cur_pause = max(pause, cur_pause * 0.9)      # 順調なら少しずつ戻す
+        else:
+            consecutive_fail += 1
+            cur_pause = min(cur_pause * 1.5, 10.0)       # 失敗したら減速
+            if consecutive_fail >= 10:
+                logging.warning("連続%d件失敗。60秒休止して減速します", consecutive_fail)
+                time.sleep(60)
+                consecutive_fail = 0
+
+        if i % 50 == 0 or i == len(todo):
             got = sum(1 for v in caps.values() if v)
-            logging.info("時価総額 %d/%d 件処理（取得成功 %d）", i, total, got)
-        time.sleep(pause)
+            el = time.time() - t0
+            eta = el / i * (len(todo) - i) / 60
+            logging.info("%d/%d 処理（成功 %d / 間隔 %.1f秒 / 残り約%.0f分）",
+                         i, len(todo), got, cur_pause, eta)
+            try:
+                os.makedirs("data", exist_ok=True)
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    json.dump({"saved_at": time.time(), "caps": caps}, f)
+            except Exception as e:
+                logging.warning("キャッシュ保存失敗: %s", e)
+        time.sleep(cur_pause)
+
+    try:
+        os.makedirs("data", exist_ok=True)
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump({"saved_at": time.time(), "caps": caps}, f)
+    except Exception:
+        pass
     return caps
 
 
