@@ -2,17 +2,17 @@ name: update-data
 
 on:
   schedule:
-    - cron: '0 9 * * 1-5'     # 平日 JST 18:00 … 差分更新
-    - cron: '0 6 1 * *'       # 毎月1日 JST 15:00 … ユニバース作り直し
+    - cron: '0 9 * * 1-5'
+    - cron: '0 6 1 * *'
   workflow_dispatch:
     inputs:
       target:
         description: '何を取得するか'
         type: choice
         default: 'all'
-        options: [all, prices, assets]
+        options: [all, prices, assets, universe]
       full:
-        description: '全期間を取り直す場合は 1（既存データは破棄して再取得）'
+        description: '全期間を取り直す場合は 1'
         default: '0'
       stock_period:
         description: '個別株の取得期間（full=1のとき）例: 6y, 10y, max'
@@ -27,7 +27,7 @@ on:
         description: '銘柄数の上限（0で無制限）'
         default: '0'
       pause:
-        description: '時価総額取得の間隔（秒）レート制限が出るなら大きく'
+        description: '時価総額取得の間隔（秒）'
         default: '1.2'
 
 permissions:
@@ -52,28 +52,50 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Build universe
-        if: ${{ github.event.inputs.rebuild_universe == '1' || github.event.schedule == '0 6 1 * *' }}
+        if: ${{ github.event.inputs.rebuild_universe == '1' || github.event.inputs.target == 'universe' || github.event.schedule == '0 6 1 * *' }}
         env:
           MIN_MARKET_CAP: ${{ github.event.inputs.min_market_cap || '800000000000' }}
           MAX_TICKERS: ${{ github.event.inputs.max_tickers || '0' }}
           PAUSE: ${{ github.event.inputs.pause || '1.2' }}
         run: python build_universe.py || echo "ユニバース更新をスキップ（既存を維持）"
 
+      # 重い株価取得の前に、ユニバースとキャッシュを先に保存しておく。
+      # ここで保存しないと、後の工程が失敗したときに数時間分の作業が失われる。
+      - name: Commit universe first
+        if: ${{ always() && (github.event.inputs.rebuild_universe == '1' || github.event.inputs.target == 'universe' || github.event.schedule == '0 6 1 * *') }}
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "data: update universe"
+          file_pattern: 'data/universe.csv data/market_cap_cache.json'
+
       - name: Fetch stock prices
-        if: ${{ github.event.inputs.target != 'assets' }}
+        if: ${{ github.event.inputs.target != 'assets' && github.event.inputs.target != 'universe' }}
         env:
           FULL: ${{ github.event.inputs.full || '0' }}
           PERIOD: ${{ github.event.inputs.full == '1' && (github.event.inputs.stock_period || '6y') || '3mo' }}
         run: python fetch_prices.py
 
       - name: Fetch indices and sector ETFs
-        if: ${{ github.event.inputs.target != 'prices' }}
+        if: ${{ github.event.inputs.target != 'prices' && github.event.inputs.target != 'universe' }}
         env:
           FULL: ${{ github.event.inputs.full || '0' }}
           PERIOD: ${{ github.event.inputs.full == '1' && 'max' || '3mo' }}
         run: python fetch_assets.py
 
-      - uses: stefanzweifel/git-auto-commit-action@v5
+      - name: Check file sizes
+        if: always()
+        run: |
+          echo "--- 100MBを超えるファイルがないか確認 ---"
+          find data -type f -size +95M -exec ls -lh {} \; || true
+          BIG=$(find data -type f -size +95M | wc -l)
+          if [ "$BIG" -gt 0 ]; then
+            echo "::warning::95MBを超えるファイルがあります。pushが失敗する可能性があります"
+          fi
+          du -sh data || true
+
+      - name: Commit data
+        if: always()
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "data: update (${{ github.event.inputs.target || 'scheduled' }})"
           file_pattern: 'data/*'
