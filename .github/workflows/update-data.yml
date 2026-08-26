@@ -26,6 +26,9 @@ on:
       max_tickers:
         description: '銘柄数の上限（0で無制限）'
         default: '0'
+      pause:
+        description: '時価総額取得の間隔（秒）レート制限が出るなら大きく'
+        default: '1.2'
 
 permissions:
   contents: write
@@ -53,6 +56,7 @@ jobs:
         env:
           MIN_MARKET_CAP: ${{ github.event.inputs.min_market_cap || '800000000000' }}
           MAX_TICKERS: ${{ github.event.inputs.max_tickers || '0' }}
+          PAUSE: ${{ github.event.inputs.pause || '1.2' }}
         run: python build_universe.py || echo "ユニバース更新をスキップ（既存を維持）"
 
       - name: Fetch stock prices
