@@ -106,7 +106,11 @@ def fetch(tickers: list[str], period: str) -> pd.DataFrame:
 
 
 def sanity_check(df: pd.DataFrame) -> list[str]:
-    """明らかにおかしいデータを検出する（分割の未調整など）。"""
+    """明らかにおかしいデータを検出する（分割の未調整・流動性不足など）。
+
+    中小型株を含めると、株式分割の未調整・出来高ゼロの日・
+    極端に薄い売買代金といった問題が増えるため検査を強化している。
+    """
     warns = []
     if df.empty:
         return ["データが空です"]
@@ -114,6 +118,14 @@ def sanity_check(df: pd.DataFrame) -> list[str]:
         g = g.sort_values("date")
         if len(g) < 5:
             continue
+        # 流動性: 直近60日の平均売買代金と、出来高ゼロの日の割合
+        tail = g.tail(60)
+        turnover = float((tail["volume"] * tail["close"]).mean())
+        if turnover < 1e8:
+            warns.append(f"{t} 売買代金が薄い(60日平均 {turnover/1e8:.2f}億円)")
+        zero_ratio = float((g["volume"].fillna(0) == 0).mean())
+        if zero_ratio > 0.02:
+            warns.append(f"{t} 出来高ゼロの日が{zero_ratio*100:.0f}%")
         r = g["close"].pct_change().dropna()
         # 1日で-60%以下 or +150%以上は株式分割の未調整を疑う
         bad = r[(r <= -0.6) | (r >= 1.5)]

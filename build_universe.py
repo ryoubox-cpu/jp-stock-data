@@ -21,7 +21,8 @@ import logging
 import pandas as pd
 import requests
 
-MIN_MARKET_CAP = float(os.environ.get("MIN_MARKET_CAP", 800e9))  # 8000億円
+MIN_MARKET_CAP = float(os.environ.get("MIN_MARKET_CAP", 800e9))   # 下限（既定8000億円）
+MAX_TICKERS = int(os.environ.get("MAX_TICKERS", 0))               # 0なら無制限（時価総額上位N銘柄に絞る）
 JPX_PAGE = "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html"
 OUT = "data/universe.csv"
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -138,6 +139,9 @@ def main() -> int:
     sel = listing[listing["market_cap"] >= MIN_MARKET_CAP].copy()
     sel = sel.sort_values("market_cap", ascending=False).reset_index(drop=True)
     logging.info("時価総額 %.0f億円以上: %d 銘柄", MIN_MARKET_CAP / 1e8, len(sel))
+    if MAX_TICKERS and len(sel) > MAX_TICKERS:
+        sel = sel.head(MAX_TICKERS).reset_index(drop=True)
+        logging.info("上位 %d 銘柄に制限", MAX_TICKERS)
 
     if len(sel) == 0:
         logging.error("該当ゼロ。既存ユニバースを維持します")
