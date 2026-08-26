@@ -21,6 +21,7 @@ from datetime import datetime, timezone, timedelta
 import pandas as pd
 
 PARQUET = "data/prices.parquet"
+PARQUET_DIR = "data/prices"          # 100MB制限を避けるため年ごとに分割
 RECENT_CSV = "data/prices_recent.csv"
 MANIFEST = "data/manifest.json"
 UNIVERSE = "data/universe.csv"
@@ -153,8 +154,17 @@ def main() -> int:
         return 1
     logging.info("取得 %d 行 / %d 銘柄", len(new), new["ticker"].nunique())
 
-    if os.path.exists(PARQUET) and not FULL:
-        old = pd.read_parquet(PARQUET)
+    old = None
+    if not FULL:
+        if os.path.isdir(PARQUET_DIR):
+            fs = [os.path.join(PARQUET_DIR, f) for f in sorted(os.listdir(PARQUET_DIR))
+                  if f.endswith(".parquet")]
+            if fs:
+                old = pd.concat([pd.read_parquet(f) for f in fs], ignore_index=True)
+        elif os.path.exists(PARQUET):
+            old = pd.read_parquet(PARQUET)
+    if old is not None and len(old):
+        old["ticker"] = old["ticker"].astype(str)
         merged = pd.concat([old, new], ignore_index=True)
     else:
         merged = new
@@ -169,11 +179,41 @@ def main() -> int:
         logging.warning("整合性: %s", w)
 
     os.makedirs("data", exist_ok=True)
-    merged.to_parquet(PARQUET, index=False, compression="snappy")
+    os.makedirs(PARQUET_DIR, exist_ok=True)
+
+    # 容量削減: 価格はfloat32、銘柄コードはcategory、圧縮はzstd
+    slim = merged.copy()
+    for c in ["open", "high", "low", "close"]:
+        if c in slim:
+            slim[c] = slim[c].astype("float32")
+    if "volume" in slim:
+        slim["volume"] = slim["volume"].astype("float32")
+    slim["ticker"] = slim["ticker"].astype("category")
+
+    # GitHubの100MB制限を避けるため年ごとに分割して保存
+    for old in os.listdir(PARQUET_DIR):
+        if old.endswith(".parquet"):
+            os.remove(os.path.join(PARQUET_DIR, old))
+    parts = []
+    for yr, g in slim.groupby(slim["date"].dt.year):
+        path = os.path.join(PARQUET_DIR, f"{int(yr)}.parquet")
+        g.to_parquet(path, index=False, compression="zstd")
+        mb = os.path.getsize(path) / 1e6
+        parts.append({"year": int(yr), "file": path, "rows": len(g), "mb": round(mb, 1)})
+        if mb > 90:
+            logging.warning("%s が %.1fMB。100MB制限に接近しています", path, mb)
+    logging.info("分割保存: %d ファイル / 合計 %.1fMB",
+                 len(parts), sum(p["mb"] for p in parts))
+    # 旧形式の単一ファイルが残っていれば削除（100MB超でpushが失敗するため）
+    if os.path.exists(PARQUET):
+        os.remove(PARQUET)
+        logging.info("旧 %s を削除しました", PARQUET)
 
     cutoff = merged["date"].max() - pd.Timedelta(days=int(RECENT_DAYS * 1.5))
     recent = merged[merged["date"] >= cutoff]
-    recent.to_csv(RECENT_CSV, index=False, encoding="utf-8")
+    recent.to_csv(RECENT_CSV + ".gz", index=False, encoding="utf-8", compression="gzip")
+    if os.path.exists(RECENT_CSV):
+        os.remove(RECENT_CSV)
 
     manifest = {
         "updated_at": datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S JST"),
@@ -181,8 +221,9 @@ def main() -> int:
         "rows": int(len(merged)),
         "date_min": str(merged["date"].min().date()),
         "date_max": str(merged["date"].max().date()),
-        "parquet_mb": round(os.path.getsize(PARQUET) / 1e6, 2),
-        "recent_csv_mb": round(os.path.getsize(RECENT_CSV) / 1e6, 2),
+        "parts": parts,
+        "parquet_mb": round(sum(p["mb"] for p in parts), 2),
+        "recent_csv_mb": round(os.path.getsize(RECENT_CSV + ".gz") / 1e6, 2),
         "warnings": warns[:50],
         "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
     }
