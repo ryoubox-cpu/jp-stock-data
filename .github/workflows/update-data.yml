@@ -10,7 +10,7 @@ on:
         description: '何を取得するか'
         type: choice
         default: 'all'
-        options: [all, prices, assets, universe, fundamentals, quarterly]
+        options: [all, prices, assets, universe, fundamentals, quarterly, diagnose]
       full:
         description: '全期間を取り直す場合は 1'
         default: '0'
@@ -69,17 +69,21 @@ jobs:
           file_pattern: 'data/universe.csv data/market_cap_cache.json'
 
       - name: Fetch stock prices
-        if: ${{ github.event.inputs.target != 'assets' && github.event.inputs.target != 'universe' && github.event.inputs.target != 'fundamentals' && github.event.inputs.target != 'quarterly' }}
+        if: ${{ github.event.inputs.target != 'assets' && github.event.inputs.target != 'universe' && github.event.inputs.target != 'fundamentals' && github.event.inputs.target != 'quarterly' && github.event.inputs.target != 'diagnose' }}
         env:
           FULL: ${{ github.event.inputs.full || '0' }}
           PERIOD: ${{ github.event.inputs.full == '1' && (github.event.inputs.stock_period || '6y') || '3mo' }}
         run: python fetch_prices.py
 
       - name: Fetch fundamentals (PER/PBR)
-        if: ${{ github.event.inputs.target == 'fundamentals' || github.event.inputs.target == 'all' || github.event.schedule == '0 6 1 * *' }}
+        if: ${{ github.event.inputs.target == 'fundamentals' || (github.event.inputs.target == 'all' && github.event.inputs.target != 'diagnose') || github.event.schedule == '0 6 1 * *' }}
         env:
           PAUSE: ${{ github.event.inputs.pause || '1.5' }}
         run: python fetch_fundamentals.py || echo "ファンダメンタル取得をスキップ"
+
+      - name: Diagnose quarterly
+        if: ${{ github.event.inputs.target == 'diagnose' }}
+        run: python diagnose_quarterly.py "${{ github.event.inputs.pause || '2.0' }}"
 
       - name: Fetch quarterly EPS/BPS
         if: ${{ github.event.inputs.target == 'quarterly' }}
@@ -88,7 +92,7 @@ jobs:
         run: python fetch_quarterly.py || echo "四半期データ取得をスキップ"
 
       - name: Fetch indices and sector ETFs
-        if: ${{ github.event.inputs.target != 'prices' && github.event.inputs.target != 'universe' && github.event.inputs.target != 'fundamentals' && github.event.inputs.target != 'quarterly' }}
+        if: ${{ github.event.inputs.target != 'prices' && github.event.inputs.target != 'universe' && github.event.inputs.target != 'fundamentals' && github.event.inputs.target != 'quarterly' && github.event.inputs.target != 'diagnose' }}
         env:
           FULL: ${{ github.event.inputs.full || '0' }}
           PERIOD: ${{ github.event.inputs.full == '1' && 'max' || '3mo' }}
