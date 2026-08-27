@@ -10,7 +10,7 @@ on:
         description: '何を取得するか'
         type: choice
         default: 'all'
-        options: [all, prices, assets, universe, fundamentals]
+        options: [all, prices, assets, universe, fundamentals, quarterly]
       full:
         description: '全期間を取り直す場合は 1'
         default: '0'
@@ -69,7 +69,7 @@ jobs:
           file_pattern: 'data/universe.csv data/market_cap_cache.json'
 
       - name: Fetch stock prices
-        if: ${{ github.event.inputs.target != 'assets' && github.event.inputs.target != 'universe' && github.event.inputs.target != 'fundamentals' }}
+        if: ${{ github.event.inputs.target != 'assets' && github.event.inputs.target != 'universe' && github.event.inputs.target != 'fundamentals' && github.event.inputs.target != 'quarterly' }}
         env:
           FULL: ${{ github.event.inputs.full || '0' }}
           PERIOD: ${{ github.event.inputs.full == '1' && (github.event.inputs.stock_period || '6y') || '3mo' }}
@@ -81,8 +81,14 @@ jobs:
           PAUSE: ${{ github.event.inputs.pause || '1.5' }}
         run: python fetch_fundamentals.py || echo "ファンダメンタル取得をスキップ"
 
+      - name: Fetch quarterly EPS/BPS
+        if: ${{ github.event.inputs.target == 'quarterly' }}
+        env:
+          PAUSE: ${{ github.event.inputs.pause || '2.0' }}
+        run: python fetch_quarterly.py || echo "四半期データ取得をスキップ"
+
       - name: Fetch indices and sector ETFs
-        if: ${{ github.event.inputs.target != 'prices' && github.event.inputs.target != 'universe' && github.event.inputs.target != 'fundamentals' }}
+        if: ${{ github.event.inputs.target != 'prices' && github.event.inputs.target != 'universe' && github.event.inputs.target != 'fundamentals' && github.event.inputs.target != 'quarterly' }}
         env:
           FULL: ${{ github.event.inputs.full || '0' }}
           PERIOD: ${{ github.event.inputs.full == '1' && 'max' || '3mo' }}
