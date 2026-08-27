@@ -1,0 +1,12 @@
+{
+  "updated_at": "2026-08-27 23:51:37 JST",
+  "tickers_requested": 887,
+  "tickers_with_eps": 831,
+  "eps_rows": 29324,
+  "eps_reported_rows": 28610,
+  "date_min": "2004-07-21",
+  "date_max": "2026-08-18",
+  "median_quarters_per_ticker": 31,
+  "annual_bs_rows": 4215,
+  "run_id": "33079526420"
+}
