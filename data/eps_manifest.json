@@ -1,12 +1,12 @@
 {
-  "updated_at": "2026-08-27 23:51:37 JST",
-  "tickers_requested": 887,
-  "tickers_with_eps": 831,
-  "eps_rows": 29324,
-  "eps_reported_rows": 28610,
+  "updated_at": "2026-10-03 01:06:47 JST",
+  "tickers_requested": 1622,
+  "tickers_with_eps": 1104,
+  "eps_rows": 33587,
+  "eps_reported_rows": 32821,
   "date_min": "2004-07-21",
-  "date_max": "2026-08-18",
-  "median_quarters_per_ticker": 31,
-  "annual_bs_rows": 4215,
-  "run_id": "33079526420"
+  "date_max": "2026-10-01",
+  "median_quarters_per_ticker": 22,
+  "annual_bs_rows": 7680,
+  "run_id": "37013203588"
 }
