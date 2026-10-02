@@ -43,11 +43,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 
 def find_jpx_xls_url() -> str | None:
-    """JPXのページから data_j.xls のリンクを探す（URLは時々変わるため固定しない）。"""
+    """JPXのページから data_j.xls / data_j.xlsx のリンクを探す（URLは時々変わるため固定しない）。"""
     try:
         r = requests.get(JPX_PAGE, headers=UA, timeout=30)
         r.raise_for_status()
-        m = re.search(r'href="([^"]*data_j\.xls)"', r.text)
+        # 2026年9月ごろから .xls → .xlsx に変わったため、両方に対応する
+        m = re.search(r'href="([^"]*data_j\.xlsx?)"', r.text)
         if not m:
             logging.warning("JPXページ内に data_j.xls のリンクが見つかりません")
             return None
@@ -66,9 +67,10 @@ def load_jpx_listing() -> pd.DataFrame | None:
         logging.info("JPX銘柄一覧を取得: %s", url)
         r = requests.get(url, headers=UA, timeout=60)
         r.raise_for_status()
-        with open("/tmp/data_j.xls", "wb") as f:
+        path = "/tmp/" + url.rsplit("/", 1)[-1]      # 拡張子を元ファイルに合わせる（xlsとxlsxで読み込み方式が違う）
+        with open(path, "wb") as f:
             f.write(r.content)
-        df = pd.read_excel("/tmp/data_j.xls")
+        df = pd.read_excel(path)
         df.columns = [str(c).strip() for c in df.columns]
         code_col = next((c for c in df.columns if "コード" in c), None)
         name_col = next((c for c in df.columns if "銘柄名" in c), None)
