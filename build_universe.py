@@ -4,9 +4,15 @@
 
 手順:
   1. JPXの「東証上場銘柄一覧」(data_j.xls) を自動で探して取得
-  2. プライム市場の内国株のみに絞る
+  2. 内国株（既定: プライム・スタンダード・グロース）に絞る
   3. yfinance で時価総額を取得し、閾値以上を残す
-  4. data/universe.csv に保存
+  4. 前回ユニバースにいた銘柄は、閾値を割っても上場中なら残す（データが途切れないように）
+  5. data/universe.csv に保存
+
+2026-10 変更点:
+  ・既定の下限を300億円に引き下げ、スタンダード・グロースも対象に
+  ・英字入りの新コード（285A など）を取りこぼしていた不具合を修正
+  ・銘柄数が前回の半分未満になったら保存しない安全装置を追加
 
 JPXが取れない場合は universe_seed.txt（1行1コード）にフォールバックする。
 """
@@ -22,7 +28,11 @@ import logging
 import pandas as pd
 import requests
 
-MIN_MARKET_CAP = float(os.environ.get("MIN_MARKET_CAP", 800e9))   # 下限（既定8000億円）
+MIN_MARKET_CAP = float(os.environ.get("MIN_MARKET_CAP", 30e9))    # 下限（既定300億円）
+# 対象市場（カンマ区切り）。JPX一覧の「市場・商品区分」に含まれる語で判定する
+MARKETS = [m.strip() for m in os.environ.get("MARKETS", "プライム,スタンダード,グロース").split(",") if m.strip()]
+KEEP_EXISTING = os.environ.get("KEEP_EXISTING", "1") == "1"       # 前回の銘柄を残すか
+CODE_RE = r"\d[0-9A-Z]\d[0-9A-Z]"     # 1301 も 285A も通す（2024年以降の英字入りコード対応）
 MAX_TICKERS = int(os.environ.get("MAX_TICKERS", 0))               # 0なら無制限（時価総額上位N銘柄に絞る）
 JPX_PAGE = "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html"
 OUT = "data/universe.csv"
@@ -67,14 +77,19 @@ def load_jpx_listing() -> pd.DataFrame | None:
             logging.warning("想定した列が見つかりません: %s", list(df.columns))
             return None
         out = pd.DataFrame({
-            "code": df[code_col].astype(str).str.strip(),
+            "code": df[code_col].astype(str).str.strip().str.upper().str.replace(r"\.0$", "", regex=True),
             "meigara": df[name_col].astype(str).str.strip(),
             "market": df[mkt_col].astype(str) if mkt_col else "",
         })
-        # プライム市場の内国株のみ（4桁の数字コード）
-        out = out[out["code"].str.fullmatch(r"\d{4}")]
+        # 内国株のみ（4桁コード。英字入りの新コードも含む）
+        out = out[out["code"].str.fullmatch(CODE_RE)]
         if mkt_col:
-            out = out[out["market"].str.contains("プライム", na=False)]
+            is_domestic = out["market"].str.contains("内国", na=False)
+            in_market = out["market"].apply(lambda s: any(m in s for m in MARKETS))
+            out = out[is_domestic & in_market].copy()
+            # 市場名を短く（例: 「プライム（内国株式）」→「プライム」）
+            out["market"] = out["market"].str.replace(r"（.*?）|\(.*?\)", "", regex=True).str.strip()
+            logging.info("市場別: %s", out["market"].value_counts().to_dict())
         logging.info("JPX一覧から %d 銘柄", len(out))
         return out.reset_index(drop=True)
     except Exception as e:
@@ -89,7 +104,7 @@ def load_seed() -> pd.DataFrame | None:
     with open("universe_seed.txt", encoding="utf-8") as f:
         for line in f:
             c = line.strip().split(",")[0].strip()
-            if re.fullmatch(r"\d{4}", c):
+            if re.fullmatch(CODE_RE, c.upper()):
                 codes.append(c)
     if not codes:
         return None
@@ -193,7 +208,8 @@ def main() -> int:
         logging.error("取得率が低すぎます（レート制限の可能性）。既存ユニバースを維持します")
         return 1
 
-    sel = listing[listing["market_cap"] >= MIN_MARKET_CAP].copy()
+    listing["above_min"] = listing["market_cap"] >= MIN_MARKET_CAP
+    sel = listing[listing["above_min"]].copy()
     sel = sel.sort_values("market_cap", ascending=False).reset_index(drop=True)
     logging.info("時価総額 %.0f億円以上: %d 銘柄", MIN_MARKET_CAP / 1e8, len(sel))
     if MAX_TICKERS and len(sel) > MAX_TICKERS:
@@ -204,8 +220,30 @@ def main() -> int:
         logging.error("該当ゼロ。既存ユニバースを維持します")
         return 1
 
+    # 前回いた銘柄は、上場中なら閾値を割っても残す。
+    # 外すと株価データがそこで途切れ、上場廃止と区別がつかなくなる（生存者バイアスの一因）。
+    prev = None
+    if os.path.exists(OUT):
+        try:
+            prev = pd.read_csv(OUT)
+        except Exception as e:
+            logging.warning("前回ユニバースの読み込み失敗: %s", e)
+    if KEEP_EXISTING and prev is not None and len(prev):
+        keep = listing[listing["ticker"].isin(prev["ticker"]) & ~listing["ticker"].isin(sel["ticker"])]
+        if len(keep):
+            logging.info("前回からの継続（閾値未満だが上場中）: %d 銘柄", len(keep))
+            sel = pd.concat([sel, keep], ignore_index=True)
+
+    # 安全装置: 前回の半分未満なら、取得失敗の可能性が高いので保存しない
+    if prev is not None and len(prev) and len(sel) < len(prev) * 0.5:
+        logging.error("銘柄数が前回 %d → 今回 %d に激減。取得失敗とみなし既存ユニバースを維持します",
+                      len(prev), len(sel))
+        return 1
+
     os.makedirs("data", exist_ok=True)
-    sel[["ticker", "code", "meigara", "market_cap"]].to_csv(OUT, index=False, encoding="utf-8")
+    cols = ["ticker", "code", "meigara", "market_cap", "market", "above_min"]
+    sel[cols].to_csv(OUT, index=False, encoding="utf-8")
+    logging.info("合計 %d 銘柄（市場別 %s）", len(sel), sel["market"].value_counts().to_dict())
     logging.info("保存: %s", OUT)
     print(sel[["ticker", "meigara", "market_cap"]].head(15).to_string(index=False))
     return 0
