@@ -1,11 +1,11 @@
 {
-  "updated_at": "2026-10-02 01:09:04 JST",
+  "updated_at": "2026-10-06 03:03:47 JST",
   "assets_requested": 76,
   "assets_fetched": 76,
   "failed": [],
-  "rows": 473463,
+  "rows": 473634,
   "date_min": "1927-12-30",
-  "date_max": "2026-10-01",
-  "parquet_mb": 16.43,
-  "run_id": "36889446825"
+  "date_max": "2026-10-05",
+  "parquet_mb": 16.42,
+  "run_id": "37352457506"
 }
